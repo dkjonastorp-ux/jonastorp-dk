@@ -81,8 +81,10 @@ h1{font-family:var(--f-display);font-weight:700;text-transform:uppercase;letter-
 .bts{position:relative;padding-block:64px;overflow:hidden}
 .bts-track{overflow:hidden;padding-bottom:32px;cursor:grab;touch-action:pan-y;user-select:none}
 .bts-track.drag{cursor:grabbing}
-.bts-rail{display:flex;gap:16px;width:max-content;will-change:transform}
-.bts-item{flex:none;width:55vw;aspect-ratio:4/5;background:var(--w05);scroll-snap-align:start;position:relative;overflow:hidden}
+.bts-rail{position:relative;height:calc(55vw * 1.25)}
+@media (min-width:768px){.bts-rail{height:calc(30vw * 1.25)}}
+@media (min-width:1280px){.bts-rail{height:calc(20vw * 1.25)}}
+.bts-item{position:absolute;top:0;left:0;width:55vw;aspect-ratio:4/5;background:var(--w05);overflow:hidden;backface-visibility:hidden}
 @media (min-width:768px){.bts-item{width:30vw}}
 @media (min-width:1280px){.bts-item{width:20vw}}
 .bts-item img{width:100%;height:100%;object-fit:cover;display:block;user-select:none;-webkit-user-drag:none}
@@ -299,37 +301,49 @@ h2{font-family:var(--f-display);font-weight:500;letter-spacing:-.025em;font-size
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const img=(src,alt)=>`<img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('broken')"><span class="ph">${esc(alt)}</span>`;
 
-// Behind the scenes: an endless rail that drifts slowly and eases on arrows, drag and swipe
+// Behind the scenes: one set of images, each placed on its own so the loop never shows a seam or a repeat
 const bts=Array.from({length:15},(_,i)=>`images/bts-${i+1}.jpg`);
 const track=document.getElementById("bts");
-const setHTML=hidden=>bts.map((s,i)=>`<div class="bts-item"${hidden?' aria-hidden="true"':""}>${img(s,"Behind the scenes "+(i+1))}</div>`).join("");
-track.innerHTML=`<div class="bts-rail">${setHTML(false)+setHTML(true)+setHTML(true)}</div>`;
-const rail=track.firstElementChild, items=rail.children;
+track.innerHTML=`<div class="bts-rail">${bts.map((s,i)=>`<div class="bts-item"><img src="${esc(s)}" alt="Behind the scenes ${i+1}" decoding="async" draggable="false" onerror="this.parentNode.classList.add('broken')"><span class="ph">Behind the scenes ${i+1}</span></div>`).join("")}</div>`;
+const rail=track.firstElementChild, items=[...rail.children];
 const reduce=matchMedia("(prefers-reduced-motion: reduce)");
-const setW=()=>items[bts.length].offsetLeft-items[0].offsetLeft;
-const step=()=>items[1].offsetLeft-items[0].offsetLeft;
-const DRIFT=28;            // px per second
+const GAP=16, DRIFT=28;    // px between images, px per second
+let itemW=0, step=0, total=0, padL=0;
+function measure(){
+  itemW=items[0].getBoundingClientRect().width;
+  step=itemW+GAP; total=step*items.length;
+  padL=parseFloat(getComputedStyle(track).paddingLeft)||0;
+}
+measure(); addEventListener("resize",measure);
 let x=0, target=0, vel=0, hover=false, dragging=false, lastX=0, lastT=0, prev=performance.now();
+function place(){
+  const vw=track.clientWidth;
+  for(let i=0;i<items.length;i++){
+    let pos=((i*step+x)%total+total)%total;           // 0..total
+    if(pos>vw+step) pos-=total;                        // wrap items that left on the right to the left side
+    if(pos>total-step) pos-=total;
+    items[i].style.transform=`translate3d(${Math.round((pos+padL)*2)/2}px,0,0)`;
+  }
+}
 function frame(now){
   const dt=Math.min(.05,(now-prev)/1000); prev=now;
-  const w=setW();
   if(!dragging){
     if(!hover&&!reduce.matches) target-=DRIFT*dt;      // gentle drift
     target+=vel*dt; vel*=Math.pow(.04,dt);              // inertia after a swipe
     x+=(target-x)*Math.min(1,dt*7);                     // ease towards target
   }
-  if(w){ // wrap without a visible jump
-    while(x<=-w){x+=w;target+=w}
-    while(x>0){x-=w;target-=w}
+  if(total){ // keep numbers small; positions are modular so nothing jumps
+    while(x<-total){x+=total;target+=total}
+    while(x>total){x-=total;target-=total}
   }
-  rail.style.transform=`translate3d(${x}px,0,0)`;
+  place();
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+place(); requestAnimationFrame(frame);
 track.addEventListener("mouseenter",()=>hover=true);
 track.addEventListener("mouseleave",()=>hover=false);
 document.querySelectorAll(".arrow").forEach(b=>b.addEventListener("click",()=>{
-  const st=step(); target=Math.round(target/st)*st-st*Number(b.dataset.dir); vel=0;
+  target=Math.round(target/step)*step-step*Number(b.dataset.dir); vel=0;
 }));
 track.addEventListener("pointerdown",e=>{dragging=true;vel=0;lastX=e.clientX;lastT=performance.now();track.classList.add("drag");track.setPointerCapture(e.pointerId)});
 track.addEventListener("pointermove",e=>{
